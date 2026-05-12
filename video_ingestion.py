@@ -85,21 +85,28 @@ def _duration_reason(duration_seconds: int) -> str | None:
 
 def _fetch_transcript(video_id: str) -> str:
     """Descarga transcript priorizando español y luego inglés."""
-    api = YouTubeTranscriptApi()
-
-    # Compatibilidad con versiones nuevas y antiguas del paquete.
+    
+    # Usar el método estático correctamente (no instanciar la clase)
     try:
-        transcript_items = api.fetch(video_id, languages=["es", "en"])
-        # En versiones nuevas, cada item tiene atributo .text
-        text_chunks = [getattr(item, "text", "") for item in transcript_items]
-        joined = " ".join(chunk for chunk in text_chunks if chunk).strip()
-        if joined:
-            return joined
+        # Intentar español primero
+        transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=["es"])
+        return " ".join(item.get("text", "") for item in transcript_items).strip()
     except Exception:
         pass
-
-    transcript_items = api.get_transcript(video_id, languages=["es", "en"])
-    return " ".join(item.get("text", "") for item in transcript_items).strip()
+    
+    try:
+        # Si español no funciona, intentar inglés
+        transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+        return " ".join(item.get("text", "") for item in transcript_items).strip()
+    except Exception:
+        pass
+    
+    try:
+        # Si ninguno específico funciona, permitir cualquier idioma disponible
+        transcript_items = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join(item.get("text", "") for item in transcript_items).strip()
+    except Exception as e:
+        raise ValueError(f"No se pudo obtener transcripción: {e}")
 
 
 def _run_with_timeout(func, args: tuple, timeout_seconds: int):
