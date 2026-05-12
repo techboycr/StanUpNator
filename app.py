@@ -442,73 +442,7 @@ def _render_step_1(api_key: str) -> None:
                 st.markdown(f"- {item.url}: {item.reason}")
 
         if not accepted:
-            st.error("❌ No se pudieron descargar automáticamente los transcripts.")
-            
-            with st.expander("📋 **Alternativa: Pegar transcripts manualmente**", expanded=True):
-                st.info(
-                    "Si YouTube está bloqueando desde este entorno, puedes pegar los transcripts "
-                    "manualmente. Formato: `[VIDEO_ID o URL]\\n[TRANSCRIPT]\\n---\\n`"
-                )
-                
-                manual_transcripts = st.text_area(
-                    "Pega los transcripts (uno por sección separada por ---)",
-                    height=300,
-                    placeholder="Ejemplo:\n8pLi57wn0m0\nBuenas noches pues...\n---\n\n8AiulsAi_bM\nHoy les quiero contar...\n---",
-                    key=f"manual_transcripts_{st.session_state.reset_counter}"
-                )
-                
-                if st.button("Usar transcripts pegados manualmente", use_container_width=True):
-                    if manual_transcripts.strip():
-                        # Parsear transcripts manualmente
-                        manual_accepted = []
-                        sections = manual_transcripts.split("---")
-                        
-                        for section in sections:
-                            lines = [l.strip() for l in section.strip().split("\n") if l.strip()]
-                            if len(lines) < 2:
-                                continue
-                            
-                            video_id_or_url = lines[0]
-                            transcript_text = "\n".join(lines[1:])
-                            
-                            # Extraer video_id si es URL
-                            from video_ingestion import extract_youtube_id
-                            video_id = extract_youtube_id(video_id_or_url)
-                            if not video_id:
-                                video_id = video_id_or_url  # Asumir que es ID directo
-                            
-                            if transcript_text:
-                                manual_accepted.append({
-                                    "url": f"https://www.youtube.com/watch?v={video_id}",
-                                    "title": f"Video {video_id}",
-                                    "duration_seconds": -1,
-                                    "transcript": transcript_text,
-                                })
-                        
-                        if not manual_accepted:
-                            st.error("No se encontraron transcripts válidos en el texto pegado.")
-                            return
-                        
-                        # Indexar transcripts manualmente
-                        with st.spinner("Indexando transcripciones manuales en RAG..."):
-                            initialize_vectorstore(api_key)
-                            chunks = add_transcript_records(manual_accepted, api_key)
-                        
-                        semantic_signals = extract_semantic_signals(
-                            [r["transcript"] for r in manual_accepted], top_k=20
-                        )
-                        
-                        st.session_state.videos_ready = True
-                        st.session_state.video_records = manual_accepted
-                        st.session_state.semantic_signals = semantic_signals
-                        _reset_from_step_2()
-                        
-                        st.success(f"✅ Base lista (manual). Videos: {len(manual_accepted)} | Chunks: {chunks}")
-                        st.session_state.wizard_step = 2
-                        st.rerun()
-                    else:
-                        st.error("Por favor pega al menos un transcript.")
-            
+            st.error("No hay videos validos para construir la base de conocimiento.")
             return
 
         with st.spinner("Indexando transcripciones en RAG con embeddings..."):
