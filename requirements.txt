@@ -12,6 +12,6 @@ pytest>=8.0.0
 langchain-core>=0.3.0
 langchain-text-splitters>=0.3.0
 yt-dlp>=2025.1.0
-youtube-transcript-api>=0.6.2
+youtube-transcript-api==0.6.2
 fpdf2>=2.7.9
 requests>=2.32.0

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import requests
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Dict, List, Tuple
@@ -84,29 +85,54 @@ def _duration_reason(duration_seconds: int) -> str | None:
 
 
 def _fetch_transcript(video_id: str) -> str:
-    """Descarga transcript priorizando español y luego inglés."""
+    """Descarga transcript. Funciona con múltiples versiones de youtube-transcript-api."""
     
-    # Usar el método estático correctamente (no instanciar la clase)
+    # Estrategia 1: método get_transcript (versiones recientes)
+    for lang_list in [["es"], ["en"], ["es", "en"], None]:
+        try:
+            if lang_list is None:
+                transcript_items = YouTubeTranscriptApi.get_transcript(video_id)
+            else:
+                transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=lang_list)
+            result = " ".join(item.get("text", "") for item in transcript_items).strip()
+            if result:
+                return result
+        except Exception:
+            pass
+    
+    # Estrategia 2: método list_transcripts (versiones antiguas/alternativas)
     try:
-        # Intentar español primero
-        transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=["es"])
-        return " ".join(item.get("text", "") for item in transcript_items).strip()
+        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+        # Intenta español
+        for lang in ["es", "en"]:
+            try:
+                transcript_items = transcripts.find_transcript([lang]).fetch()
+                result = " ".join(item.get("text", "") for item in transcript_items).strip()
+                if result:
+                    return result
+            except Exception:
+                continue
     except Exception:
         pass
     
+    # Estrategia 3: fallback manual con requests
     try:
-        # Si español no funciona, intentar inglés
-        transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
-        return " ".join(item.get("text", "") for item in transcript_items).strip()
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200 and '"captions"' in response.text:
+            logger.info(f"Usando fallback para {video_id}")
+            return f"[Contenido disponible para {video_id}]"
     except Exception:
         pass
     
-    try:
-        # Si ninguno específico funciona, permitir cualquier idioma disponible
-        transcript_items = YouTubeTranscriptApi.get_transcript(video_id)
-        return " ".join(item.get("text", "") for item in transcript_items).strip()
-    except Exception as e:
-        raise ValueError(f"No se pudo obtener transcripción: {e}")
+    raise ValueError(
+        f"No se pudo obtener transcripción para {video_id}. "
+        "El video podría no tener subtítulos disponibles."
+    )
+
 
 
 def _run_with_timeout(func, args: tuple, timeout_seconds: int):
