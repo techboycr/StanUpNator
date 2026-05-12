@@ -97,6 +97,38 @@ def _normalize_transcript_items(transcript_items) -> str:
     return " ".join(chunks).strip()
 
 
+def _build_fallback_transcript(video_id: str, metadata: Dict) -> str:
+    """Construye contexto textual cuando YouTube bloquea subtítulos en cloud."""
+    title = (metadata.get("title") or "").strip()
+    description = (metadata.get("description") or "").strip()
+    uploader = (metadata.get("uploader") or metadata.get("channel") or "").strip()
+    tags = metadata.get("tags") or []
+    if not isinstance(tags, list):
+        tags = []
+
+    parts: List[str] = []
+    if title:
+        parts.append(f"Titulo: {title}.")
+    if uploader:
+        parts.append(f"Canal: {uploader}.")
+    if description:
+        parts.append(f"Descripcion: {description[:1400]}.")
+    if tags:
+        tags_clean = [str(t).strip() for t in tags[:25] if str(t).strip()]
+        if tags_clean:
+            parts.append(f"Etiquetas: {', '.join(tags_clean)}.")
+
+    if parts:
+        return " ".join(parts)
+
+    # Último recurso: no bloquear el flujo aunque no exista metadata útil.
+    return (
+        f"Video de referencia {video_id}. "
+        "No fue posible acceder a subtitulos o metadata completa desde este entorno cloud. "
+        "Usar como señal temática general de comedia."
+    )
+
+
 def _fetch_transcript(video_id: str) -> str:
     """Descarga transcript soportando APIs antiguas y nuevas del paquete."""
     errors: List[str] = []
@@ -213,24 +245,21 @@ def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], Lis
             rejected.append(RejectedVideo(url=url, reason="URL no parece ser un video válido de YouTube."))
             continue
 
+        transcript = ""
+        transcript_error = ""
+
         # 1. Intentar obtener transcript primero
         try:
             transcript = _run_with_timeout(_fetch_transcript, (video_id,), timeout_seconds=25)
             if not transcript:
                 raise ValueError("Transcript vacío")
         except Exception as exc:
-            rejected.append(
-                RejectedVideo(
-                    url=url,
-                    reason=f"No se pudo descargar transcript: {exc}",
-                    duration_seconds=None,
-                )
-            )
-            continue
+            transcript_error = str(exc)
 
         # 2. Intentar obtener metadata, pero no rechazar si falla
         duration_seconds = -1
         title = f"Video {video_id}"
+        metadata: Dict = {}
         try:
             metadata = _run_with_timeout(_get_video_metadata, (url,), timeout_seconds=20)
             duration_seconds = int(metadata.get("duration") or -1)
@@ -246,6 +275,14 @@ def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], Lis
             continue
         if reason:
             warnings.append(f"{title}: {reason}")
+
+        if not transcript:
+            transcript = _build_fallback_transcript(video_id, metadata)
+            if transcript_error:
+                warnings.append(
+                    f"{title}: No se pudo descargar transcript real ({transcript_error}). "
+                    "Se usará contexto alterno (titulo/descripcion) para no bloquear el flujo."
+                )
 
         accepted.append(
             VideoRecord(
