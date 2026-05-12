@@ -1,0 +1,42 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Variables de entorno
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Streamlit
+.streamlit/secrets.toml
+
+# ChromaDB / FAISS vectorstores
+chroma_db/
+faiss_index/
+*.index
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
+
+# IDEs
+.vscode/
+.idea/
+*.DS_Store
+
+# HuggingFace cache
+.cache/
