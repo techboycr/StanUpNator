@@ -84,53 +84,99 @@ def _duration_reason(duration_seconds: int) -> str | None:
     )
 
 
+def _normalize_transcript_items(transcript_items) -> str:
+    """Convierte distintas estructuras de transcript en texto plano."""
+    chunks: List[str] = []
+    for item in transcript_items:
+        if isinstance(item, dict):
+            text = item.get("text", "")
+        else:
+            text = getattr(item, "text", "")
+        if text:
+            chunks.append(text)
+    return " ".join(chunks).strip()
+
+
 def _fetch_transcript(video_id: str) -> str:
-    """Descarga transcript. Funciona con múltiples versiones de youtube-transcript-api."""
-    
-    # Estrategia 1: método get_transcript (versiones recientes)
-    for lang_list in [["es"], ["en"], ["es", "en"], None]:
+    """Descarga transcript soportando APIs antiguas y nuevas del paquete."""
+    errors: List[str] = []
+
+    # API nueva (v1.x): instancia + fetch(...)
+    try:
+        api = YouTubeTranscriptApi()
+        if hasattr(api, "fetch"):
+            for langs in (["es", "en"], ["es"], ["en"]):
+                try:
+                    transcript_items = api.fetch(video_id, languages=langs)
+                    joined = _normalize_transcript_items(transcript_items)
+                    if joined:
+                        return joined
+                except Exception as exc:
+                    errors.append(f"fetch({langs}): {exc}")
+    except Exception as exc:
+        errors.append(f"api() init: {exc}")
+
+    # API nueva alternativa: instancia + list(...)
+    try:
+        api = YouTubeTranscriptApi()
+        if hasattr(api, "list"):
+            transcript_list = api.list(video_id)
+            for transcript in transcript_list:
+                lang = getattr(transcript, "language_code", "")
+                if lang in {"es", "en"}:
+                    transcript_items = transcript.fetch()
+                    joined = _normalize_transcript_items(transcript_items)
+                    if joined:
+                        return joined
+            for transcript in transcript_list:
+                transcript_items = transcript.fetch()
+                joined = _normalize_transcript_items(transcript_items)
+                if joined:
+                    return joined
+    except Exception as exc:
+        errors.append(f"list(): {exc}")
+
+    # API antigua (v0.x): métodos estáticos
+    for langs in (["es", "en"], ["es"], ["en"], None):
         try:
-            if lang_list is None:
+            if langs is None:
                 transcript_items = YouTubeTranscriptApi.get_transcript(video_id)
             else:
-                transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=lang_list)
-            result = " ".join(item.get("text", "") for item in transcript_items).strip()
-            if result:
-                return result
-        except Exception:
-            pass
-    
-    # Estrategia 2: método list_transcripts (versiones antiguas/alternativas)
+                transcript_items = YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
+            joined = _normalize_transcript_items(transcript_items)
+            if joined:
+                return joined
+        except Exception as exc:
+            errors.append(f"get_transcript({langs}): {exc}")
+
     try:
-        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-        # Intenta español
-        for lang in ["es", "en"]:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        for langs in (["es"], ["en"]):
             try:
-                transcript_items = transcripts.find_transcript([lang]).fetch()
-                result = " ".join(item.get("text", "") for item in transcript_items).strip()
-                if result:
-                    return result
-            except Exception:
-                continue
-    except Exception:
-        pass
-    
-    # Estrategia 3: fallback manual con requests
+                transcript_items = transcript_list.find_transcript(langs).fetch()
+                joined = _normalize_transcript_items(transcript_items)
+                if joined:
+                    return joined
+            except Exception as exc:
+                errors.append(f"find_transcript({langs}): {exc}")
+    except Exception as exc:
+        errors.append(f"list_transcripts(): {exc}")
+
+    # Diagnóstico básico: validar si YouTube expone captions en HTML.
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200 and '"captions"' in response.text:
-            logger.info(f"Usando fallback para {video_id}")
-            return f"[Contenido disponible para {video_id}]"
-    except Exception:
-        pass
-    
+        has_captions = response.status_code == 200 and '"captions"' in response.text
+        errors.append(f"html_captions={has_captions}")
+    except Exception as exc:
+        errors.append(f"html_check: {exc}")
+
     raise ValueError(
-        f"No se pudo obtener transcripción para {video_id}. "
-        "El video podría no tener subtítulos disponibles."
+        "No se pudo obtener transcripción para "
+        f"{video_id}. Detalle: {' | '.join(errors[:3])}"
     )
 
 
