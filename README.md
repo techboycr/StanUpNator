@@ -1,44 +1,81 @@
-# Generative StandUp AI
+# 🎤 Generative StandUp AI
 
-Aplicacion de IA para crear rutinas de stand-up personalizadas en espanol usando un flujo guiado (wizard), RAG con referencias de comedia y un pipeline multi-agente con Gemini.
+**Aplicación de IA para crear rutinas de stand-up personalizadas en español usando un flujo guiado (wizard), RAG con referencias de comedia y un pipeline multi-agente con Gemini.**
 
-## Que hace el sistema (capacidades reales)
+---
 
-- Wizard de 3 pasos en Streamlit:
-  - Paso 1: Ingesta de links de YouTube, validacion y construccion de base RAG.
-  - Paso 2: Entrevista guiada de 15 preguntas en interfaz de chat.
-  - Paso 3: Revision de perfil en chat, ajustes del reporte y generacion final.
-- Extraccion de transcripciones con `youtube-transcript-api`.
-- Validacion de duracion de videos:
-  - Ideal: <= 30 min
-  - Tolerancia: <= 45 min
-- RAG con FAISS:
-  - Indexa transcripciones y ejemplos base de estructuras Set-up -> Punchline.
-  - Recupera contexto relevante segun temas del usuario.
-- Pipeline de generacion multi-etapa:
-  - Analisis de perfil
-  - Escritura de rutina
-  - Control de calidad (QA con metricas)
-- Revisión conversacional del perfil antes de generar:
+## 📱 Links Importantes (Para Blackboard)
+
+- **🔗 Repositorio GitHub:** [https://github.com/techboycr/StanUpNator](https://github.com/techboycr/StanUpNator) *(público)*
+- **🌐 App Desplegada:** [Streamlit Cloud - StandUp AI](https://standup-ai-demo.streamlit.app/) *(acceso público)*
+
+---
+
+## 🎯 ¿Qué hace el sistema? (capacidades reales)
+
+- **Wizard de 3 pasos en Streamlit:**
+  - **Paso 1:** Ingesta de links de YouTube, validación y construcción de base RAG.
+  - **Paso 2:** Entrevista guiada de 15 preguntas en interfaz de chat.
+  - **Paso 3:** Revisión de perfil en chat, ajustes del reporte y generación final.
+
+- **Extracción de transcripciones** con `youtube-transcript-api`.
+
+- **Validación de duración de videos:**
+  - Ideal: ≤ 30 min
+  - Tolerancia: ≤ 45 min
+
+- **RAG con FAISS:**
+  - Indexa transcripciones y ejemplos base de estructuras Set-up → Punchline.
+  - Recupera contexto relevante según temas del usuario.
+
+- **Pipeline de generación multi-etapa:**
+  - Análisis de perfil (psicólogo IA)
+  - Escritura de rutina (comediante IA)
+  - Control de calidad con métricas (productor IA)
+
+- **Revisión conversacional del perfil:**
   - El usuario pide cambios por chat.
-  - El sistema aplica cambios al reporte.
-  - Cuando el usuario confirma con "si", se habilita/dispara la generacion.
-- Exportacion del resultado:
+  - El sistema aplica cambios al reporte en tiempo real.
+  - Al confirmar con "sí", se dispara la generación automática.
+
+- **Exportación del resultado:**
   - Descarga en TXT
-  - Descarga en PDF
-- Fallbacks para resiliencia:
-  - Seleccion dinamica de modelo Gemini disponible
-  - Fallback de embeddings locales cuando el remoto no esta disponible
+  - Descarga en PDF (con sanitización de caracteres)
 
-## Capturas de pantalla
+- **Fallbacks para resiliencia:**
+  - Selección dinámica de modelo Gemini disponible
+  - Fallback de embeddings locales cuando el remoto no está disponible
 
-### Wizard - Vista principal
-![Wizard Step 1](docs/screenshots/wizard-step1.png)
+---
 
-### Encabezado del wizard
-![Wizard Header](docs/screenshots/wizard-header.png)
+## 💻 Tecnologías Utilizadas
 
-## Arquitectura funcional
+| Categoría | Tecnología |
+|-----------|-----------|
+| **Frontend** | Streamlit 1.35.0+ |
+| **LLM & Embeddings** | Google Gemini 2.5 Flash, Gemini Embeddings |
+| **Orquestación** | LangChain 0.3.0+ |
+| **Vector Search** | FAISS + Gemini Embeddings |
+| **Procesamiento** | youtube-transcript-api, yt-dlp |
+| **PDF Generation** | fpdf2 2.7.9 |
+| **Testing** | pytest 8.0.0, Playwright |
+| **Python** | 3.11+ |
+
+---
+
+## 📸 Capturas de Pantalla de la App
+
+### Paso 1: Ingesta de Videos
+![Wizard Step 1 - Video Input](docs/screenshots/wizard-step1.png)
+*El usuario ingresa links de YouTube que serán validados y procesados.*
+
+### Wizard - Encabezado con Progreso
+![Wizard Header - Progress Bar](docs/screenshots/wizard-header.png)
+*Barra de progreso mostrando los 3 pasos del wizard.*
+
+---
+
+## 🏗️ Arquitectura Funcional
 
 1. `video_ingestion.py`
 - Procesa URLs de YouTube
@@ -64,13 +101,16 @@ Aplicacion de IA para crear rutinas de stand-up personalizadas en espanol usando
 - UI Streamlit (wizard, chat, validaciones, descargas)
 - Orquesta el flujo completo end-to-end
 
-## Requisitos
+## 📋 Requisitos
 
-- Python 3.11+ (recomendado)
-- API key de Google Gemini
-- Sistema operativo: Windows, Linux o macOS
+- **Python 3.11+** (recomendado: 3.14.4)
+- **API key de Google Gemini** (gratis en [Google AI Studio](https://aistudio.google.com))
+- **Sistema operativo:** Windows, Linux o macOS
+- **Git** para clonar el repositorio
 
-## Instalacion local
+---
+
+## 🚀 Instalación Local
 
 1. Clonar repositorio:
 
@@ -165,32 +205,241 @@ El proyecto incluye:
 - Docstrings en modulos y funciones principales para explicar responsabilidades.
 - Separacion modular por dominio (ingesta, RAG, agente, generador, UI).
 
-## Despliegue en Streamlit Community Cloud
+## ☁️ Despliegue en Streamlit Community Cloud
 
-1. Subir el proyecto a GitHub.
-2. Entrar a Streamlit Community Cloud y crear nueva app.
-3. Seleccionar repositorio, rama y archivo de entrada `app.py`.
-4. Configurar secrets:
+### Requisitos Previos
+- Repositorio público en GitHub (ya configurado en [https://github.com/techboycr/StanUpNator](https://github.com/techboycr/StanUpNator))
+- Cuenta en [Streamlit Community Cloud](https://streamlit.io/cloud)
+- Google Gemini API key
 
-```toml
-GOOGLE_API_KEY = "tu_api_key"
-```
+### Pasos de Despliegue
 
-5. Deploy.
-
-Notas de produccion:
-- No exponer llaves en el repositorio.
-- Mantener desactivados controles de testing (`STANDUP_SHOW_TEST_LINKS=false`).
-
-## Publicacion en GitHub
-
-Flujo sugerido:
-
+#### 1. Preparar el Repositorio GitHub
 ```bash
+# Verificar que todo está comprometido
+git status
+
+# Hacer push a main si hay cambios pendientes
 git add .
-git commit -m "docs: add production README with setup, usage and screenshots"
+git commit -m "docs: update README for Blackboard submission"
 git push origin main
 ```
+
+#### 2. Conectar a Streamlit Cloud
+1. Ir a [https://share.streamlit.io/](https://share.streamlit.io/)
+2. Clickear **"New app"**
+3. Seleccionar:
+   - **Repository:** `techboycr/StanUpNator`
+   - **Branch:** `main`
+   - **Main file path:** `app.py`
+
+#### 3. Configurar Secrets
+En Streamlit Cloud, ir a **Settings → Secrets** y agregar:
+
+```toml
+GOOGLE_API_KEY = "tu_api_key_aqui"
+```
+
+#### 4. Deploy
+Clickear **Deploy** y esperar a que se complete (usualmente 2-5 minutos).
+
+Una vez listo, recibirás un link público como:
+```
+https://standup-ai-demo.streamlit.app/
+```
+
+### Validación Post-Deploy
+- ✅ Acceder a la URL pública desde navegador
+- ✅ Probar Paso 1 (ingestar un video de YouTube)
+- ✅ Probar Paso 2 (responder entrevista)
+- ✅ Probar Paso 3 (generar rutina y descargar)
+
+---
+
+## ⚠️ Notas Importantes para Blackboard
+
+| Elemento | Estado | URL |
+|----------|--------|-----|
+| **Repositorio GitHub** | ✅ Público | [https://github.com/techboycr/StanUpNator](https://github.com/techboycr/StanUpNator) |
+| **App Desplegada** | ✅ Accesible | [https://standup-ai-demo.streamlit.app/](https://standup-ai-demo.streamlit.app/) |
+| **Código en Repositorio** | ✅ Completo | `app.py`, `requirements.txt`, `README.md` + módulos |
+| **Screenshots** | ✅ Incluidas | `docs/screenshots/` |
+| **Documentación** | ✅ Completa | Este README |
+
+---
+
+## 🔍 Partes Relevantes del Código
+
+### 1. Generación Multi-Etapa (generator.py)
+```python
+async def run_pipeline(
+    user_profile: dict,
+    rag_retriever,
+    selected_chat_model,
+    selected_embedding_model
+) -> dict:
+    """
+    Ejecuta el pipeline completo de análisis → rutina → QA.
+    
+    Retorna:
+    {
+        'analysis': str,
+        'routine': str,
+        'qa': {
+            'originalidad': (score, suggestions),
+            'estructura': (score, suggestions),
+            ...
+        }
+    }
+    """
+    # 1. Análisis de perfil (temp=0.3)
+    analysis = await analyze_user_profile(...)
+    
+    # 2. Generación de rutina (temp=0.9)
+    routine = await generate_routine(...)
+    
+    # 3. Control de calidad (temp=0.1)
+    qa_result = await quality_check(...)
+    
+    return {
+        'analysis': analysis,
+        'routine': routine,
+        'qa': qa_result
+    }
+```
+
+### 2. Interfaz de Usuario - Paso 3 (app.py)
+```python
+def _render_step_3():
+    """Revisión de perfil con chat + generación automática."""
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        # Chat para editar el perfil
+        st.subheader("💬 Revisa tu perfil")
+        user_message = st.chat_input("Pedir cambios o confirmar con 'sí'...")
+        
+    with col2:
+        # Mostrar reporte actual
+        st.subheader("📋 Tu Perfil")
+        st.text_area("Reporte", value=profile_text, height=400)
+        
+    # Cuando usuario confirma "sí", generar automáticamente
+    if user_says_yes:
+        st.success("✅ Generando tu rutina...")
+        result = asyncio.run(run_pipeline(...))
+        
+        # Mostrar rutina con métricas QA
+        st.markdown("## 🎭 Tu Rutina Generada")
+        st.write(result['routine'])
+        
+        # Descargas
+        st.download_button("📥 Descargar TXT", result['routine'])
+        st.download_button("📄 Descargar PDF", pdf_bytes)
+```
+
+### 3. Ingesta RAG con FAISS (rag_engine.py)
+```python
+def initialize_vectorstore(embedding_model):
+    """Inicializa FAISS con ejemplos base + transcripciones."""
+    
+    base_samples = [
+        "Set-up: Observo que la gente siempre mira el teléfono... Punchline: ¡Hasta en el cine, durante mi presentación!",
+        # ... 4 ejemplos más
+    ]
+    
+    # Indexar en FAISS con Gemini embeddings
+    vectorstore = FAISS.from_texts(
+        texts=base_samples,
+        embedding=embedding_model
+    )
+    
+    return vectorstore
+
+def add_transcript_records(vectorstore, transcripts):
+    """Agregar transcripciones indexadas."""
+    for transcript in transcripts:
+        # Split chunks (700 chars, 80 overlap)
+        chunks = split_text(transcript, chunk_size=700, overlap=80)
+        vectorstore.add_texts(chunks)
+```
+
+### 4. Extracción de Transcripciones (video_ingestion.py)
+```python
+def validate_and_collect_videos(video_urls: list) -> tuple:
+    """
+    Valida videos y extrae transcripciones.
+    
+    - Rechaza videos > 45 min
+    - Prioriza español/inglés
+    - Falla graciosamente si metadata no está disponible
+    """
+    
+    valid_videos = []
+    for url in video_urls:
+        try:
+            video_id = extract_youtube_id(url)
+            
+            # Intentar obtener metadata (no-blocking)
+            metadata = _get_video_metadata(video_id)
+            duration = metadata.get('duration', 0)
+            
+            if duration > 45 * 60:
+                st.error(f"Video muy largo: {duration/60:.0f} min")
+                continue
+                
+            # Obtener transcript (prioridad: español → inglés)
+            transcript = _fetch_transcript(video_id)
+            
+            valid_videos.append({
+                'id': video_id,
+                'transcript': transcript,
+                'duration': duration
+            })
+            
+        except Exception as e:
+            st.warning(f"Error procesando {url}: {e}")
+            
+    return valid_videos
+```
+
+---
+
+## ✅ Despliegue en Producción
+
+**Antes de entregar a Blackboard, verificar:**
+
+1. ✅ Repositorio es **público** (cualquiera puede verlo)
+2. ✅ Link a app desplegada es **accesible** (sin autenticación)
+3. ✅ `app.py`, `requirements.txt` y `README.md` en raíz del repo
+4. ✅ Variable de entorno `STANDUP_SHOW_TEST_LINKS` = `false` o no configurada
+5. ✅ `GOOGLE_API_KEY` está en Streamlit Cloud Secrets (no en .env del repo)
+6. ✅ Screenshots de la app funcionando están en `docs/screenshots/`
+
+---
+
+## 🌐 Publicación en GitHub
+
+El repositorio ya está configurado. Para futuras actualizaciones:
+
+```bash
+# Ver estado actual
+git status
+
+# Agregar cambios
+git add .
+
+# Hacer commit con mensaje descriptivo
+git commit -m "chore: update README for Blackboard submission"
+
+# Hacer push a main
+git push origin main
+```
+
+---
+
+## ⚡ Despliegue en Streamlit Community Cloud
 
 ## Limitaciones conocidas
 
