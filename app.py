@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import re
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -94,9 +94,14 @@ def _init_state() -> None:
         "interview_done": False,
         "interview_messages": [],
         "last_asked_index": -1,
+        "interview_processing": False,
+        "interview_pending_answer": "",
+        "interview_pending_question": "",
         "profile_report": "",
         "profile_review_messages": [],
         "profile_approved": False,
+        "profile_review_processing": False,
+        "profile_review_pending_input": "",
         "generate_now": False,
         "reset_confirm": False,
         "reset_counter": 0,
@@ -121,9 +126,14 @@ def _reset_from_step_2() -> None:
         "interview_done",
         "interview_messages",
         "last_asked_index",
+        "interview_processing",
+        "interview_pending_answer",
+        "interview_pending_question",
         "profile_report",
         "profile_review_messages",
         "profile_approved",
+        "profile_review_processing",
+        "profile_review_pending_input",
         "last_result",
         "generate_now",
         "llm",
@@ -150,9 +160,14 @@ def _reset_wizard_process() -> None:
         "interview_done",
         "interview_messages",
         "last_asked_index",
+        "interview_processing",
+        "interview_pending_answer",
+        "interview_pending_question",
         "profile_report",
         "profile_review_messages",
         "profile_approved",
+        "profile_review_processing",
+        "profile_review_pending_input",
         "generate_now",
         "reset_confirm",
         "last_result",
@@ -429,8 +444,42 @@ def _render_step_1(api_key: str) -> None:
             st.error("No hay links para procesar.")
             return
 
-        with st.spinner("Validando duracion y descargando transcripciones..."):
-            accepted, rejected, warnings = validate_and_collect_videos(urls)
+        progress_ui = st.progress(0.0, text="Preparando transcripciones...")
+        progress_msg = st.empty()
+
+        def _on_transcription_progress(event: Dict[str, Any]) -> None:
+            video_index = max(1, int(event.get("video_index", 1) or 1))
+            total_videos = max(1, int(event.get("total_videos", len(urls)) or len(urls) or 1))
+            phase_progress = max(0, min(100, int(event.get("progress_percent", 0) or 0)))
+            phase = str(event.get("phase", "queued") or "queued")
+            title = str(event.get("title", "") or "")
+            message = str(event.get("message", "Procesando...") or "Procesando...")
+            eta_seconds = event.get("eta_seconds")
+
+            overall_fraction = ((video_index - 1) + (phase_progress / 100.0)) / total_videos
+            overall_fraction = max(0.0, min(1.0, overall_fraction))
+            progress_ui.progress(
+                overall_fraction,
+                text=(
+                    f"Transcribiendo video {video_index}/{total_videos} "
+                    f"- fase: {phase} ({phase_progress}%)"
+                ),
+            )
+
+            eta_text = ""
+            if isinstance(eta_seconds, (int, float)) and eta_seconds >= 0:
+                eta_text = f" | ETA aprox: {int(eta_seconds)}s"
+
+            label = title if title else f"Video {video_index}"
+            progress_msg.info(f"{label}: {message}{eta_text}")
+
+        accepted, rejected, warnings = validate_and_collect_videos(
+            urls,
+            progress_callback=_on_transcription_progress,
+        )
+
+        progress_ui.progress(1.0, text="Transcripciones finalizadas")
+        progress_msg.success("Finalizo la transcripcion de videos. Preparando indexado RAG...")
 
         if warnings:
             for item in warnings:
@@ -509,22 +558,36 @@ def _render_step_2(api_key: str) -> None:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
+    if st.session_state.interview_processing:
+        with st.chat_message("assistant"):
+            with st.spinner("Analizando tu respuesta..."):
+                profile_info = process_user_response(
+                    st.session_state.llm,
+                    st.session_state.memory,
+                    st.session_state.interview_pending_answer,
+                    st.session_state.interview_pending_question,
+                )
+
+        st.session_state.profile_data.append(profile_info)
+        st.session_state.answered_count += 1
+        if st.session_state.answered_count >= total_q:
+            st.session_state.interview_done = True
+
+        st.session_state.interview_processing = False
+        st.session_state.interview_pending_answer = ""
+        st.session_state.interview_pending_question = ""
+        st.rerun()
+        return
+
     if answered < total_q:
         user_answer = st.chat_input("Tu respuesta...", key="interview_chat_input")
         if user_answer:
             question = INTERVIEW_QUESTIONS[answered]
             st.session_state.interview_messages.append({"role": "user", "content": user_answer})
 
-            profile_info = process_user_response(
-                st.session_state.llm,
-                st.session_state.memory,
-                user_answer,
-                question,
-            )
-            st.session_state.profile_data.append(profile_info)
-            st.session_state.answered_count += 1
-            if st.session_state.answered_count >= total_q:
-                st.session_state.interview_done = True
+            st.session_state.interview_pending_answer = user_answer
+            st.session_state.interview_pending_question = question
+            st.session_state.interview_processing = True
             st.rerun()
 
     if st.session_state.interview_done:
@@ -587,25 +650,35 @@ def _render_step_3(api_key: str) -> None:
         )
         if review_input:
             st.session_state.profile_review_messages.append({"role": "user", "content": review_input})
-            if _is_affirmative(review_input):
-                st.session_state.profile_approved = True
-                st.session_state.generate_now = True
-                st.session_state.profile_review_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "Perfecto. Aprobaste el perfil, voy a generar tu material ahora.",
-                    }
-                )
-            else:
+            st.session_state.profile_review_pending_input = review_input
+            st.session_state.profile_review_processing = True
+            st.rerun()
+
+        if st.session_state.profile_review_processing:
+            pending_input = st.session_state.profile_review_pending_input
+            with st.chat_message("assistant"):
                 with st.spinner("Analizando y aplicando cambios al perfil..."):
-                    updated_report, reply = _apply_profile_change(
-                        api_key,
-                        st.session_state.profile_report,
-                        review_input,
-                    )
-                st.session_state.profile_report = updated_report
-                st.session_state.profile_approved = False
-                st.session_state.profile_review_messages.append({"role": "assistant", "content": reply})
+                    if _is_affirmative(pending_input):
+                        st.session_state.profile_approved = True
+                        st.session_state.generate_now = True
+                        st.session_state.profile_review_messages.append(
+                            {
+                                "role": "assistant",
+                                "content": "Perfecto. Aprobaste el perfil, voy a generar tu material ahora.",
+                            }
+                        )
+                    else:
+                        updated_report, reply = _apply_profile_change(
+                            api_key,
+                            st.session_state.profile_report,
+                            pending_input,
+                        )
+                        st.session_state.profile_report = updated_report
+                        st.session_state.profile_approved = False
+                        st.session_state.profile_review_messages.append({"role": "assistant", "content": reply})
+
+            st.session_state.profile_review_processing = False
+            st.session_state.profile_review_pending_input = ""
             st.rerun()
 
     with right_col:

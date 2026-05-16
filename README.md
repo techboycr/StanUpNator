@@ -18,7 +18,8 @@
   - **Paso 2:** Entrevista guiada de 15 preguntas en interfaz de chat.
   - **Paso 3:** Revisión de perfil en chat, ajustes del reporte y generación final.
 
-- **Extracción de transcripciones** con `youtube-transcript-api`.
+- **Extracción de transcripciones** usando API local de cluster (`/api/transcriptions` en `127.0.0.1:3001`).
+- **Fallback opcional** a `youtube-transcript-api` solo si se habilita por variable de entorno.
 
 - **Validación de duración de videos:**
   - Ideal: ≤ 30 min
@@ -56,7 +57,7 @@
 | **LLM & Embeddings** | Google Gemini 2.5 Flash, Gemini Embeddings |
 | **Orquestación** | LangChain 0.3.0+ |
 | **Vector Search** | FAISS + Gemini Embeddings |
-| **Procesamiento** | youtube-transcript-api, yt-dlp |
+| **Procesamiento** | API local de transcripciones (cluster), yt-dlp |
 | **PDF Generation** | fpdf2 2.7.9 |
 | **Testing** | pytest 8.0.0, Playwright |
 | **Python** | 3.11+ |
@@ -79,7 +80,7 @@
 
 1. `video_ingestion.py`
 - Procesa URLs de YouTube
-- Descarga transcript
+- Crea jobs en API local de transcripciones y hace polling hasta estado terminal
 - Intenta leer metadata (titulo/duracion)
 - Aplica reglas de duracion
 
@@ -147,6 +148,9 @@ pip install -r requirements.txt
 
 ```env
 GOOGLE_API_KEY=tu_api_key_aqui
+TRANSCRIPTION_API_BASE_URL=http://127.0.0.1:3001
+TRANSCRIPTION_API_ACCESS_TOKEN=test
+TRANSCRIPTION_API_MODEL_PROFILE=balanced-es
 ```
 
 Opcional para mostrar controles de testing en UI:
@@ -187,7 +191,23 @@ Luego abrir en navegador:
 ## Variables de entorno
 
 - `GOOGLE_API_KEY` (obligatoria): acceso a Gemini.
+- `TRANSCRIPTION_API_BASE_URL` (recomendada): URL base del API local de transcripciones.
+- `TRANSCRIPTION_API_ACCESS_TOKEN` (recomendada): cookie `access_token` para auth local.
+- `TRANSCRIPTION_API_MODEL_PROFILE` (opcional): perfil a solicitar al cluster (ej. `balanced-es`).
+- `TRANSCRIPTION_API_POLL_TIMEOUT_SECONDS` (opcional): timeout del polling por job.
+- `TRANSCRIPTION_API_POLL_INTERVAL_SECONDS` (opcional): intervalo de polling.
+- `STANDUP_ENABLE_YT_TRANSCRIPT_FALLBACK` (opcional): `true/false` para fallback legacy.
 - `STANDUP_SHOW_TEST_LINKS` (opcional): muestra controles de testing (`true`/`false`).
+
+## Validación local del handoff API
+
+Para ejecutar el checklist técnico de conectividad del cluster en local:
+
+```bash
+python specs/run_transcription_api_handoff_local.py
+```
+
+Este runner valida auth, creación/polling de jobs, nodos/policy, cola, rebalance y pruebas de errores comunes.
 
 ## Testing
 
@@ -372,8 +392,8 @@ def validate_and_collect_videos(video_urls: list) -> tuple:
     Valida videos y extrae transcripciones.
     
     - Rechaza videos > 45 min
-    - Prioriza español/inglés
-    - Falla graciosamente si metadata no está disponible
+    - Solicita transcript al API local del cluster
+    - Usa fallback legacy opcional si se habilita por env
     """
     
     valid_videos = []
@@ -381,16 +401,16 @@ def validate_and_collect_videos(video_urls: list) -> tuple:
         try:
             video_id = extract_youtube_id(url)
             
-            # Intentar obtener metadata (no-blocking)
-            metadata = _get_video_metadata(video_id)
+            # Leer metadata (duración/título)
+            metadata = _get_video_metadata(url)
             duration = metadata.get('duration', 0)
             
             if duration > 45 * 60:
                 st.error(f"Video muy largo: {duration/60:.0f} min")
                 continue
                 
-            # Obtener transcript (prioridad: español → inglés)
-            transcript = _fetch_transcript(video_id)
+            # Obtener transcript via cluster local
+            transcript = _fetch_transcript_from_cluster(url, duration_seconds=duration)
             
             valid_videos.append({
                 'id': video_id,

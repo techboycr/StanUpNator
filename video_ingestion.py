@@ -8,19 +8,37 @@ Ingesta de links de YouTube para un wizard de comedia:
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 import requests
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from yt_dlp import YoutubeDL
 from youtube_transcript_api import YouTubeTranscriptApi
+from transcription_api_client import (
+    TranscriptionApiClient,
+    TranscriptionApiError,
+    extract_transcript_text,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_IDEAL_MINUTES = 30
 MAX_ALLOWED_MINUTES = 45
+
+_TRANSCRIPTION_API_BASE_URL = os.getenv("TRANSCRIPTION_API_BASE_URL", "http://127.0.0.1:3001").strip()
+_TRANSCRIPTION_API_TOKEN = os.getenv("TRANSCRIPTION_API_ACCESS_TOKEN", "test").strip()
+_TRANSCRIPTION_API_PROFILE = os.getenv("TRANSCRIPTION_API_MODEL_PROFILE", "balanced-es").strip() or "balanced-es"
+_TRANSCRIPTION_POLL_TIMEOUT = int(os.getenv("TRANSCRIPTION_API_POLL_TIMEOUT_SECONDS", "240"))
+_TRANSCRIPTION_POLL_INTERVAL = int(os.getenv("TRANSCRIPTION_API_POLL_INTERVAL_SECONDS", "3"))
+_ENABLE_LEGACY_YOUTUBE_FALLBACK = (
+    os.getenv("STANDUP_ENABLE_YT_TRANSCRIPT_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
+)
+
+TranscriptionProgressCallback = Callable[[Dict[str, object]], None]
 
 # Stopwords mínimas para extraer términos semánticos locales sin LLM.
 _STOPWORDS = {
@@ -129,6 +147,151 @@ def _build_fallback_transcript(video_id: str, metadata: Dict) -> str:
     )
 
 
+def _fetch_transcript_from_cluster(url: str, duration_seconds: int | None = None) -> str:
+    """Obtiene transcript via API local del cluster de transcripciones."""
+    return _fetch_transcript_from_cluster_with_progress(url=url, duration_seconds=duration_seconds)
+
+
+def _safe_int(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _emit_progress(
+    progress_callback: Optional[TranscriptionProgressCallback],
+    payload: Dict[str, object],
+) -> None:
+    if not progress_callback:
+        return
+    try:
+        progress_callback(payload)
+    except Exception as exc:
+        logger.warning(f"No se pudo emitir progreso de transcripcion: {exc}")
+
+
+def _fetch_transcript_from_cluster_with_progress(
+    *,
+    url: str,
+    duration_seconds: int | None = None,
+    progress_callback: Optional[TranscriptionProgressCallback] = None,
+    video_index: int = 1,
+    total_videos: int = 1,
+    title: str = "",
+) -> str:
+    """Obtiene transcript via API local y publica progreso por fase cuando hay callback."""
+    client = TranscriptionApiClient(
+        base_url=_TRANSCRIPTION_API_BASE_URL,
+        access_token=_TRANSCRIPTION_API_TOKEN,
+        timeout_seconds=20,
+    )
+
+    create_payload = client.create_job(
+        url=url,
+        mode="async",
+        model_profile=_TRANSCRIPTION_API_PROFILE,
+        duration_seconds=duration_seconds,
+    )
+
+    if "job_id" not in create_payload:
+        detail = create_payload.get("detail", "respuesta inesperada al crear job")
+        raise TranscriptionApiError(f"No se pudo crear job de transcripcion: {detail}", payload=create_payload)
+
+    job_id = str(create_payload["job_id"])
+    initial_runtime = create_payload.get("runtime") if isinstance(create_payload, dict) else {}
+    initial_phase = "queued"
+    initial_progress = 5
+    initial_next_poll = _TRANSCRIPTION_POLL_INTERVAL
+    initial_message = "Job de transcripcion en cola"
+
+    if isinstance(initial_runtime, dict):
+        initial_phase = str(initial_runtime.get("phase") or initial_phase)
+        initial_progress = _safe_int(initial_runtime.get("progress_percent"), initial_progress)
+        initial_next_poll = _safe_int(initial_runtime.get("next_poll_after_seconds"), initial_next_poll)
+        initial_message = str(initial_runtime.get("message") or initial_message)
+
+    _emit_progress(
+        progress_callback,
+        {
+            "job_id": job_id,
+            "url": url,
+            "title": title,
+            "video_index": video_index,
+            "total_videos": total_videos,
+            "status": str(create_payload.get("status", "queued")).lower(),
+            "phase": initial_phase,
+            "progress_percent": max(0, min(100, initial_progress)),
+            "next_poll_after_seconds": max(1, initial_next_poll),
+            "eta_seconds": initial_runtime.get("eta_seconds") if isinstance(initial_runtime, dict) else None,
+            "message": initial_message,
+        },
+    )
+
+    started = time.time()
+    job: Dict[str, object] = {}
+    while True:
+        job = client.get_job(job_id)
+        status = str(job.get("status", "")).lower()
+        runtime = job.get("runtime") if isinstance(job, dict) else {}
+        phase = status or "queued"
+        progress_percent = 0
+        next_poll = _TRANSCRIPTION_POLL_INTERVAL
+        eta_seconds = None
+        message = f"Estado: {phase}"
+
+        if isinstance(runtime, dict):
+            phase = str(runtime.get("phase") or phase)
+            progress_percent = _safe_int(runtime.get("progress_percent"), progress_percent)
+            next_poll = _safe_int(runtime.get("next_poll_after_seconds"), next_poll)
+            eta_seconds = runtime.get("eta_seconds")
+            message = str(runtime.get("message") or message)
+
+        progress_percent = max(0, min(100, progress_percent))
+        next_poll = max(1, next_poll)
+
+        _emit_progress(
+            progress_callback,
+            {
+                "job_id": job_id,
+                "url": url,
+                "title": title,
+                "video_index": video_index,
+                "total_videos": total_videos,
+                "status": status,
+                "phase": phase,
+                "progress_percent": progress_percent,
+                "next_poll_after_seconds": next_poll,
+                "eta_seconds": eta_seconds,
+                "message": message,
+            },
+        )
+
+        if status in {"completed", "failed", "cancelled"}:
+            break
+
+        if time.time() - started > _TRANSCRIPTION_POLL_TIMEOUT:
+            raise TranscriptionApiError(
+                f"Timeout esperando estado terminal para job {job_id}",
+                payload={"last_status": status, "job_id": job_id},
+            )
+
+        time.sleep(next_poll)
+
+    status = str(job.get("status", "")).lower()
+    if status != "completed":
+        detail = job.get("status_detail") or job.get("detail") or "sin detalle"
+        raise TranscriptionApiError(
+            f"Job {job_id} finalizo en estado '{status}'",
+            payload={"status": status, "detail": detail},
+        )
+
+    transcript = extract_transcript_text(job)
+    if not transcript:
+        raise TranscriptionApiError(f"Job {job_id} completado sin transcript util", payload=job)
+    return transcript
+
+
 def _fetch_transcript(video_id: str) -> str:
     """Descarga transcript soportando APIs antiguas y nuevas del paquete."""
     errors: List[str] = []
@@ -222,7 +385,10 @@ def _run_with_timeout(func, args: tuple, timeout_seconds: int):
             raise TimeoutError(f"Tiempo de espera excedido ({timeout_seconds}s)")
 
 
-def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], List[RejectedVideo], List[str]]:
+def validate_and_collect_videos(
+    urls: List[str],
+    progress_callback: Optional[TranscriptionProgressCallback] = None,
+) -> Tuple[List[VideoRecord], List[RejectedVideo], List[str]]:
     """
     Valida links, duración y transcript.
 
@@ -235,10 +401,26 @@ def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], Lis
     rejected: List[RejectedVideo] = []
     warnings: List[str] = []
 
-    for raw_url in urls:
-        url = raw_url.strip()
-        if not url:
-            continue
+    normalized_urls = [raw_url.strip() for raw_url in urls if raw_url and raw_url.strip()]
+    total_videos = len(normalized_urls)
+
+    for idx, url in enumerate(normalized_urls, start=1):
+        _emit_progress(
+            progress_callback,
+            {
+                "video_index": idx,
+                "total_videos": total_videos,
+                "phase": "queued",
+                "status": "queued",
+                "progress_percent": 0,
+                "next_poll_after_seconds": 1,
+                "eta_seconds": None,
+                "message": "Validando metadata del video...",
+                "url": url,
+                "title": "",
+                "job_id": "",
+            },
+        )
 
         video_id = extract_youtube_id(url)
         if not video_id:
@@ -246,20 +428,10 @@ def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], Lis
             continue
 
         transcript = ""
-        transcript_error = ""
 
-        # 1. Intentar obtener transcript primero
-        try:
-            transcript = _run_with_timeout(_fetch_transcript, (video_id,), timeout_seconds=25)
-            if not transcript:
-                raise ValueError("Transcript vacío")
-        except Exception as exc:
-            transcript_error = str(exc)
-
-        # 2. Intentar obtener metadata, pero no rechazar si falla
+        # 1. Intentar metadata para validacion de duracion
         duration_seconds = -1
         title = f"Video {video_id}"
-        metadata: Dict = {}
         try:
             metadata = _run_with_timeout(_get_video_metadata, (url,), timeout_seconds=20)
             duration_seconds = int(metadata.get("duration") or -1)
@@ -276,13 +448,45 @@ def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], Lis
         if reason:
             warnings.append(f"{title}: {reason}")
 
-        if not transcript:
-            transcript = _build_fallback_transcript(video_id, metadata)
-            if transcript_error:
-                warnings.append(
-                    f"{title}: No se pudo descargar transcript real ({transcript_error}). "
-                    "Se usará contexto alterno (titulo/descripcion) para no bloquear el flujo."
+        # 2. Obtener transcript desde cluster local
+        try:
+            duration_for_job = duration_seconds if duration_seconds > 0 else None
+            transcript = _fetch_transcript_from_cluster_with_progress(
+                url=url,
+                duration_seconds=duration_for_job,
+                progress_callback=progress_callback,
+                video_index=idx,
+                total_videos=total_videos,
+                title=title,
+            )
+        except Exception as cluster_exc:
+            if _ENABLE_LEGACY_YOUTUBE_FALLBACK:
+                try:
+                    transcript = _run_with_timeout(_fetch_transcript, (video_id,), timeout_seconds=25)
+                    warnings.append(
+                        f"{title}: se uso fallback local youtube-transcript-api por error del cluster: {cluster_exc}"
+                    )
+                except Exception as fallback_exc:
+                    rejected.append(
+                        RejectedVideo(
+                            url=url,
+                            reason=(
+                                "No se pudo obtener transcript via cluster local ni fallback. "
+                                f"Cluster: {cluster_exc} | Fallback: {fallback_exc}"
+                            ),
+                            duration_seconds=duration_seconds if duration_seconds > 0 else None,
+                        )
+                    )
+                    continue
+            else:
+                rejected.append(
+                    RejectedVideo(
+                        url=url,
+                        reason=f"No se pudo obtener transcript via API local: {cluster_exc}",
+                        duration_seconds=duration_seconds if duration_seconds > 0 else None,
+                    )
                 )
+                continue
 
         accepted.append(
             VideoRecord(
@@ -292,6 +496,23 @@ def validate_and_collect_videos(urls: List[str]) -> Tuple[List[VideoRecord], Lis
                 duration_seconds=duration_seconds,
                 transcript=transcript,
             )
+        )
+
+        _emit_progress(
+            progress_callback,
+            {
+                "video_index": idx,
+                "total_videos": total_videos,
+                "phase": "completed",
+                "status": "completed",
+                "progress_percent": 100,
+                "next_poll_after_seconds": 0,
+                "eta_seconds": 0,
+                "message": "Transcripcion completada para este video.",
+                "url": url,
+                "title": title,
+                "job_id": "",
+            },
         )
 
     return accepted, rejected, warnings
